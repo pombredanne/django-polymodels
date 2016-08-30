@@ -5,11 +5,17 @@ django-polymodels
 A django application that provides a simple way to retrieve models type casted
 to their original ``ContentType``.
 
+.. image:: https://travis-ci.org/charettes/django-polymodels.svg?branch=master
+    :target: https://travis-ci.org/charettes/django-polymodels
+
+.. image:: https://coveralls.io/repos/charettes/django-polymodels/badge.svg?branch=master&service=github
+    :target: https://coveralls.io/github/charettes/django-polymodels?branch=master
+
 ************
 Installation
 ************
 
->>> pip install polymodels
+>>> pip install django-polymodels
 
 Make sure ``'django.contrib.contenttypes'`` and ``'polymodels'`` are in
 your `INSTALLED_APPS`
@@ -121,18 +127,6 @@ iteration, the fetched instanced are converted to their correct type by calling
 ``BasePolymorphicModel.type_cast``. Note that those lookups are cached on class
 creation to avoid computing them on every single query.
 
-*******
-Caution
-*******
-
-Prior to Django 1.6 it was not possible to issue a ``select_related`` over
-multiple one-to-one relationships. For example, given the models defined
-`above`_, ``Animal.objects.select_related('mammal__dog')`` would throw a strange
-``TypeError``. To work around this issue, ``select_subclasses`` limits such
-lookups to one level deep if you're using a version of django with `this issue`_.
-
-.. _above: #usage
-.. _this issue: https://code.djangoproject.com/ticket/16572
 
 ******************
 Note of the author

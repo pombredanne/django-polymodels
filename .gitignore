@@ -1,1 +1,6 @@
+syntax:glob
 *.py[co]
+dist/
+django_polymodels.egg-info/*
+.coverage
+.tox

@@ -3,48 +3,45 @@ from __future__ import unicode_literals
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 
-from .utils import get_content_type, get_content_types
+from .compat import is_model_iterable
 
 
 class PolymorphicQuerySet(models.query.QuerySet):
-    def select_subclasses(self, *args):
+    def select_subclasses(self, *models):
         self.type_cast = True
-        content_type_field_name = self.model.CONTENT_TYPE_FIELD
-        lookups = set([content_type_field_name])
-        opts = self.model._meta
-        accessors = opts._subclass_accessors
-        if args:
+        relateds = set()
+        accessors = self.model.subclass_accessors
+        if models:
             subclasses = set()
-            # Collect all subclasses
-            for subclass in args:
-                if not issubclass(subclass, self.model):
-                    raise TypeError("%r is not a subclass of %r" % (subclass,
-                                                                    self.model))
-                subclasses.update(subclass._meta._subclass_accessors.keys())
+            for model in models:
+                if not issubclass(model, self.model):
+                    raise TypeError(
+                        "%r is not a subclass of %r" % (model, self.model)
+                    )
+                subclasses.update(model.subclass_accessors)
             # Collect all `select_related` required lookups
             for subclass in subclasses:
                 # Avoid collecting ourself and proxy subclasses
-                subclass_lookup = accessors[subclass][2]
-                if subclass_lookup:
-                    lookups.add(subclass_lookup)
-            # Fetch associated `ContentType` instances for filtering
-            content_types = get_content_types(subclasses)
-            filters = {"%s__in" % content_type_field_name:
-                       tuple(ct.pk for ct in content_types.values())}
-            qs = self.filter(**filters)
+                related = accessors[subclass][2]
+                if related:
+                    relateds.add(related)
+            queryset = self.filter(
+                **self.model.content_type_lookup(*tuple(subclasses))
+            )
         else:
-            # Collect all `select_related` required lookups
+            # Collect all `select_related` required relateds
             for accessor in accessors.values():
                 # Avoid collecting ourself and proxy subclasses
+                related = accessor[2]
                 if accessor[2]:
-                    lookups.add(accessor[2])
-            qs = self
-        return qs.select_related(*lookups)
+                    relateds.add(related)
+            queryset = self
+        if relateds:
+            queryset = queryset.select_related(*relateds)
+        return queryset
 
     def exclude_subclasses(self):
-        content_type_field_name = self.model.CONTENT_TYPE_FIELD
-        model_content_type = get_content_type(self.model)
-        return self.filter(**{content_type_field_name: model_content_type})
+        return self.filter(**self.model.content_type_lookup())
 
     def _clone(self, *args, **kwargs):
         kwargs.update(type_cast=getattr(self, 'type_cast', False))
@@ -52,30 +49,31 @@ class PolymorphicQuerySet(models.query.QuerySet):
 
     def iterator(self):
         iterator = super(PolymorphicQuerySet, self).iterator()
-        if getattr(self, 'type_cast', False):
-            for obj in iterator:
-                yield obj.type_cast()
-        else:
-            # yield from iterator
-            for obj in iterator:
-                yield obj
+        if is_model_iterable(self) and getattr(self, 'type_cast', False):
+            iterator = (obj.type_cast() for obj in iterator)
+        # yield from iterator
+        for obj in iterator:
+            yield obj
 
-class PolymorphicManager(models.Manager):
+
+class PolymorphicManager(models.Manager.from_queryset(PolymorphicQuerySet)):
     use_for_related_fields = True
 
     def contribute_to_class(self, model, name):
         # Avoid circular reference
         from .models import BasePolymorphicModel
         if not issubclass(model, BasePolymorphicModel):
-            raise ImproperlyConfigured('`PolymorphicManager` can only be used '
-                                       'on `BasePolymorphicModel` subclasses.')
+            raise ImproperlyConfigured(
+                '`%s` can only be used on '
+                '`BasePolymorphicModel` subclasses.' % self.__class__.__name__
+            )
         return super(PolymorphicManager, self).contribute_to_class(model, name)
 
-    def get_query_set(self):
-        return PolymorphicQuerySet(self.model, using=self._db)
-
-    def select_subclasses(self, *subclasses):
-        return self.get_query_set().select_subclasses(*subclasses)
-
-    def exclude_subclasses(self):
-        return self.get_query_set().exclude_subclasses()
+    def get_queryset(self):
+        queryset = super(PolymorphicManager, self).get_queryset()
+        model = self.model
+        opts = model._meta
+        if opts.proxy:
+            # Select only associated model and its subclasses.
+            queryset = queryset.filter(**self.model.subclasses_lookup())
+        return queryset
